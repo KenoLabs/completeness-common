@@ -1,12 +1,6 @@
  
 {
   "name": "treolabs/completeness-common",
-  "authors": [
-    {
-      "name": "Roman Ratsun",
-      "email": "r.ratsun@treolabs.com"
-    }
-  ],
   "require": {
     "treolabs/treocore": "~3.23.0"
   },
