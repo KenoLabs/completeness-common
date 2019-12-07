@@ -7,6 +7,7 @@ use Espo\Core\Utils\Json;
 use Espo\ORM\Entity;
 use Espo\ORM\EntityCollection;
 use Pim\Entities\Attribute;
+use Pim\Entities\ProductAttributeValue;
 
 /**
  * Class ProductCompleteness
@@ -14,8 +15,16 @@ use Pim\Entities\Attribute;
  *
  * @author m.kokhanskyi <m.kokhanskyi@treolabs.com>
  */
-class ProductCompleteness extends Completeness implements CompletenessInterface
+class ProductCompleteness extends CommonCompleteness implements CompletenessInterface
 {
+
+    const CONFIG_FIELD_CHANNELS_DATA = [
+        'type' => 'jsonObject',
+        'layoutDetailDisabled' => true,
+        'layoutListDisabled' => true,
+        "importDisabled" => true,
+    ];
+
     /**
      * @param Entity $entity
      */
@@ -32,11 +41,12 @@ class ProductCompleteness extends Completeness implements CompletenessInterface
      * @return array
      * @throws Error
      */
-    public function run(): array
+    public function calculate(): array
     {
         $this->prepareRequiredAttr();
 
-        $result = $this->runUpdateCommonCompleteness();
+        $result = parent::calculate();
+
         $completeness['completeGlobal'] = $this->calculationCompleteGlobal();
         $channelCompleteness = $this->calculationCompletenessChannel();
         $completeness['channelCompleteness'] = [
@@ -44,26 +54,23 @@ class ProductCompleteness extends Completeness implements CompletenessInterface
             'list' => $channelCompleteness ];
 
         $this->setFieldsCompletenessInEntity($completeness);
+
         return array_merge($completeness, $result);
     }
 
     /**
      * @return array
      */
-    protected function calculationCompletenessChannel(): array
+    public static function getCompleteField(): array
     {
-       $completenessChannels = [];
-        if ($this->getConfig()->get('isMultilangActive')) {
-            foreach ($this->getChannels() as $channel) {
-                if (is_array($this->fieldsAndAttrs['attrsChannel'][$channel])) {
-                    $items = array_merge($this->fieldsAndAttrs['attrsChannel'][$channel], $this->fieldsAndAttrs['fields']);
-                } else {
-                    $items = $this->fieldsAndAttrs['fields'];
-                }
-                $completenessChannels[$channel] = $this->commonCalculationComplete($items);
-            }
+        $fieldsComplete = ['completeGlobal'];
+        $fields = parent::getCompleteField();
+        foreach ($fieldsComplete as $field) {
+            $defs = self::CONFIG_COMPLETE_FIELDS;
+            $fields[$field] = $defs;
         }
-        return $completenessChannels;
+        $fields['channelCompleteness'] = self::CONFIG_FIELD_CHANNELS_DATA;
+        return $fields;
     }
 
     /**
@@ -74,11 +81,6 @@ class ProductCompleteness extends Completeness implements CompletenessInterface
         // get required attributes
         $attributes = $this->getAttrs();
 
-        $attributes = $this->filterAttributes($attributes);
-        $multiLangFields = $this
-            ->getContainer()
-            ->get('metadata')->get('multilang.multilangFields', []);
-
         /** @var Attribute $attr */
         foreach ($attributes as $attr) {
             $scope = $attr->get('scope');
@@ -86,24 +88,24 @@ class ProductCompleteness extends Completeness implements CompletenessInterface
             $isEmpty = $this->isEmpty($attr);
             $item = ['id' => $attr->get('id'), 'isEmpty' => $isEmpty];
 
-            $this->fieldsAndAttrs['localComplete'][] = $item;
-            $this->fieldsForTotalComplete[] = $isEmpty;
+            $this->items['localComplete'][] = $item;
+            $this->itemsForTotalComplete[] = $isEmpty;
             if ($scope == 'Global') {
-                $this->fieldsAndAttrs['attrsGlobal'][] = $item;
+                $this->items['attrsGlobal'][] = $item;
             } elseif ($scope == 'Channel') {
                 $channels = $attr->get('channels')->toArray();
                 $channels = !empty($channels) ? array_column($channels, 'id') : [];
                 $this->setItemByChannel($channels, $item);
             }
-            if (isset($multiLangFields[$attr->get('attribute')->get('type')])) {
-                foreach ($this->languages as $local => $language) {
+            if (!empty($attr->get('attribute')->get('isMultilang'))) {
+                foreach ($this->getLanguages() as $local => $language) {
                     $isEmpty = $this->isEmpty($attr, $language);
                     $item = ['id' => $attr->get('id'), 'isEmpty' => $isEmpty, 'isMultiLang' => true];
 
-                    $this->fieldsAndAttrs['multiLang'][$local][] = $item;
-                    $this->fieldsForTotalComplete[] = $isEmpty;
+                    $this->items['multiLang'][$local][] = $item;
+                    $this->itemsForTotalComplete[] = $isEmpty;
                     if ($scope == 'Global') {
-                        $this->fieldsAndAttrs['attrsGlobal'][] = $item;
+                        $this->items['attrsGlobal'][] = $item;
                     } elseif ($scope == 'Channel') {
                         $this->setItemByChannel($channels, $item);
                     }
@@ -111,12 +113,36 @@ class ProductCompleteness extends Completeness implements CompletenessInterface
             }
         }
     }
+
+
+    /**
+     * @return array
+     */
+    protected function calculationCompletenessChannel(): array
+    {
+        $completenessChannels = [];
+        foreach ($this->getChannels() as $channel) {
+            $id = $channel['id'];
+            if (is_array($this->getItem('attrsChannel')[$id])) {
+                //channels attributes + fields
+                $items = array_merge($this->getItem('attrsChannel')[$id], $this->getItem('fields'));
+            } else {
+                $items = $this->getItem('fields');
+            }
+            $completenessChannels[] = [
+                'id' => $id,
+                'name' => $channel['name'],
+                'complete' => $this->commonCalculationComplete($items)];
+        }
+        return $completenessChannels;
+    }
+
     /**
      * @return float
      */
     protected function calculationCompleteGlobal(): float
     {
-        $globalItems = array_merge($this->fieldsAndAttrs['attrsGlobal'], $this->fieldsAndAttrs['fields']);
+        $globalItems = array_merge($this->getItem('attrsGlobal'), $this->getItem('fields'));
         return $this->commonCalculationComplete($globalItems);
     }
 
@@ -146,18 +172,19 @@ class ProductCompleteness extends Completeness implements CompletenessInterface
     protected function isEmpty($value, string $language = ''): bool
     {
         $isEmpty = true;
-        if (is_string($value) && !empty($this->entity->get($value . $language))) {
-            $isEmpty = false;
-        } elseif ($value instanceof Entity) {
-            $type = $value->get('attribute')->get('type');
-            if (in_array($type, ['array', 'arrayMultiLang', 'multiEnum', 'multiEnumMultiLang'])) {
+        if (is_string($value) && !empty($valueCurrent = $this->entity->get($value . $language))) {
+            if ($valueCurrent instanceof EntityCollection) {
+                $isEmpty = (bool)$valueCurrent->count();
+            } else {
+                $isEmpty = false;
+            }
+        } elseif ($value instanceof ProductAttributeValue) {
+            if (in_array($value->get('attribute')->get('type'), ['array', 'multiEnum'])) {
                 $attributeValue = Json::decode($value->get('value' . $language), true);
             } else {
                 $attributeValue = $value->get('value' . $language);
             }
-            if (!empty($attributeValue)) {
-                $isEmpty= false;
-            }
+            $isEmpty = empty($attributeValue);
         }
         return $isEmpty;
     }
@@ -167,7 +194,7 @@ class ProductCompleteness extends Completeness implements CompletenessInterface
      */
     protected function getAttrs(): ?EntityCollection
     {
-        return $this->getEntityManager()
+        $attributes = $this->getEntityManager()
             ->getRepository('ProductAttributeValue')
             ->leftJoin(['productFamilyAttribute', 'attribute'])
             ->where([
@@ -175,6 +202,8 @@ class ProductCompleteness extends Completeness implements CompletenessInterface
                 'productFamilyAttribute.isRequired' => true
             ])
             ->find();
+
+        return $this->filterAttributes($attributes);
     }
 
     /**
@@ -188,7 +217,7 @@ class ProductCompleteness extends Completeness implements CompletenessInterface
         } else {
             $channels = $this->entity->get('channels')->toArray();
         }
-        return !empty($channels) ? array_column($channels, 'id') : [];
+        return !empty($channels) ? $channels : [];
     }
 
     /**
@@ -217,7 +246,7 @@ class ProductCompleteness extends Completeness implements CompletenessInterface
     private function setItemByChannel(array $channels, array $item): void
     {
         foreach ($channels as $channel) {
-            $this->fieldsAndAttrs['attrsChannel'][$channel][] = $item;
+            $this->items['attrsChannel'][$channel][] = $item;
         }
     }
 }
