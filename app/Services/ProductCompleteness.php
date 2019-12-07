@@ -51,7 +51,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
         $channelCompleteness = $this->calculationCompletenessChannel();
         $completeness['channelCompleteness'] = [
             'total' => count($channelCompleteness),
-            'list' => $channelCompleteness ];
+            'list' => $channelCompleteness];
 
         $this->setFieldsCompletenessInEntity($completeness);
 
@@ -113,7 +113,6 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
             }
         }
     }
-
 
     /**
      * @return array
@@ -192,7 +191,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
     /**
      * @return EntityCollection|null
      */
-    protected function getAttrs(): ?EntityCollection
+    protected function getAttrs(): EntityCollection
     {
         $attributes = $this->getEntityManager()
             ->getRepository('ProductAttributeValue')
