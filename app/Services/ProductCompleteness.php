@@ -90,9 +90,9 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
 
             $this->items['localComplete'][] = $item;
             $this->itemsForTotalComplete[] = $isEmpty;
-            if ($scope == 'Global') {
+            if ($scope === 'Global') {
                 $this->items['attrsGlobal'][] = $item;
-            } elseif ($scope == 'Channel') {
+            } elseif ($scope === 'Channel') {
                 $channels = $attr->get('channels')->toArray();
                 $channels = !empty($channels) ? array_column($channels, 'id') : [];
                 $this->setItemByChannel($channels, $item);
@@ -104,9 +104,9 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
 
                     $this->items['multiLang'][$local][] = $item;
                     $this->itemsForTotalComplete[] = $isEmpty;
-                    if ($scope == 'Global') {
+                    if ($scope === 'Global') {
                         $this->items['attrsGlobal'][] = $item;
-                    } elseif ($scope == 'Channel') {
+                    } elseif ($scope === 'Channel') {
                         $this->setItemByChannel($channels, $item);
                     }
                 }
@@ -152,7 +152,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
      */
     protected function filterAttributes(EntityCollection $attributes): EntityCollection
     {
-        if (count($attributes) > 0 && $this->entity->get('type') == 'configurableProduct') {
+        if (count($attributes) > 0 && $this->entity->get('type') === 'configurableProduct') {
             foreach ($attributes as $k => $attribute) {
                 if (in_array($attribute->get('id'), $this->getExcludedAttributes())) {
                     $attributes->offsetUnset($k);
@@ -210,8 +210,8 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
      */
     protected function getChannels(): array
     {
-        if ($this->entity->get('type') == 'productVariant'
-            && !in_array('channels', $this->entity->get('data')->customRelations)) {
+        if ($this->entity->get('type') === 'productVariant'
+            && !in_array('channels', $this->entity->get('data')->customRelations, true)) {
             $channels = $this->entity->get('configurableProduct')->get('channels')->toArray();
         } else {
             $channels = $this->entity->get('channels')->toArray();
@@ -225,7 +225,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
     protected function getExcludedAttributes(): array
     {
         $result = [];
-        if ($this->entity->get('type') == 'configurableProduct') {
+        if ($this->entity->get('type') === 'configurableProduct') {
             $variants = $this->entity->get('productVariants');
             if (count($variants) > 0) {
                 /** @var Entity $variant */
