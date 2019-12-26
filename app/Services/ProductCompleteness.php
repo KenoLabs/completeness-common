@@ -23,6 +23,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
         'layoutDetailDisabled' => true,
         'layoutListDisabled' => true,
         "importDisabled" => true,
+        "sortOrder" => 3
     ];
 
     /**
@@ -63,10 +64,13 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
      */
     public static function getCompleteField(): array
     {
-        $fieldsComplete = ['completeGlobal'];
+        $fieldsComplete = [2 => 'completeGlobal'];
         $fields = parent::getCompleteField();
-        foreach ($fieldsComplete as $field) {
+        foreach ($fieldsComplete as $k => $field) {
             $defs = self::CONFIG_COMPLETE_FIELDS;
+
+            $defs['sortOrder'] = $k;
+
             $fields[$field] = $defs;
         }
         $fields['channelCompleteness'] = self::CONFIG_FIELD_CHANNELS_DATA;
