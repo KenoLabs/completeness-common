@@ -8,6 +8,7 @@ use Espo\ORM\Entity;
 use Espo\ORM\EntityCollection;
 use Pim\Entities\Attribute;
 use Pim\Entities\ProductAttributeValue;
+use Treo\Core\Container;
 
 /**
  * Class ProductCompleteness
@@ -22,8 +23,10 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
         'type' => 'jsonObject',
         'layoutDetailDisabled' => true,
         'layoutListDisabled' => true,
-        "importDisabled" => true,
-        "sortOrder" => 3
+        'layoutFiltersDisabled' => true,
+        'layoutMassUpdateDisabled' => true,
+        'importDisabled' => true,
+        'sortOrder' => 3
     ];
 
     /**
@@ -31,7 +34,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
      */
     public function setEntity(Entity $entity): void
     {
-        $this->entity = ($entity->getEntityType() == 'Product')
+        $this->entity = ($entity->getEntityType() === 'Product')
             ? $entity
             : $entity->get('product');
     }
@@ -75,6 +78,19 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
         }
         $fields['channelCompleteness'] = self::CONFIG_FIELD_CHANNELS_DATA;
         return $fields;
+    }
+
+    /**
+     * @param Container $container
+     * @param string $scope
+     * @param bool $value
+     */
+    public static function setHasCompleteness(Container $container, string $scope, bool $value):void
+    {
+        parent::setHasCompleteness($container, $scope, $value);
+
+        //set HasCompleteness for ProductAttributeValue
+        parent::setHasCompleteness($container, 'ProductAttributeValue', $value);
     }
 
     /**
@@ -215,6 +231,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
     protected function getChannels(): array
     {
         if ($this->entity->get('type') === 'productVariant'
+            && !empty($this->entity->get('configurableProduct'))
             && !in_array('channels', $this->entity->get('data')->customRelations, true)) {
             $channels = $this->entity->get('configurableProduct')->get('channels')->toArray();
         } else {
@@ -231,7 +248,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
         $result = [];
         if ($this->entity->get('type') === 'configurableProduct') {
             $variants = $this->entity->get('productVariants');
-            if (count($variants) > 0) {
+            if (!empty($variants) && count($variants) > 0) {
                 /** @var Entity $variant */
                 foreach ($variants as $variant) {
                     $result = array_merge($result, array_column($variant->get('data')->attributes, 'id'));
