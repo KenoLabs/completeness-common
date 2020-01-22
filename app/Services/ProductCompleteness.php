@@ -18,16 +18,7 @@ use Treo\Core\Container;
  */
 class ProductCompleteness extends CommonCompleteness implements CompletenessInterface
 {
-
-    const CONFIG_FIELD_CHANNELS_DATA = [
-        'type' => 'jsonObject',
-        'layoutDetailDisabled' => true,
-        'layoutListDisabled' => true,
-        'layoutFiltersDisabled' => true,
-        'layoutMassUpdateDisabled' => true,
-        'importDisabled' => true,
-        'sortOrder' => 3
-    ];
+    public const START_SORT_ORDER_CHANNEL = 3;
 
     /**
      * @param Entity $entity
@@ -52,10 +43,8 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
         $result = parent::calculate();
 
         $completeness['completeGlobal'] = $this->calculationCompleteGlobal();
-        $channelCompleteness = $this->calculationCompletenessChannel();
-        $completeness['channelCompleteness'] = [
-            'total' => count($channelCompleteness),
-            'list' => $channelCompleteness];
+        $channelsCompleteness = $this->calculationCompletenessChannel();
+        $completeness = array_merge($completeness, $channelsCompleteness);
 
         $this->setFieldsCompletenessInEntity($completeness);
 
@@ -68,29 +57,59 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
     public static function getCompleteField(): array
     {
         $fieldsComplete = [2 => 'completeGlobal'];
+
         $fields = parent::getCompleteField();
+
+        $defs = self::CONFIG_COMPLETE_FIELDS;
+
         foreach ($fieldsComplete as $k => $field) {
-            $defs = self::CONFIG_COMPLETE_FIELDS;
-
             $defs['sortOrder'] = $k;
-
             $fields[$field] = $defs;
         }
-        $fields['channelCompleteness'] = self::CONFIG_FIELD_CHANNELS_DATA;
+
         return $fields;
     }
 
     /**
      * @param Container $container
-     * @param string $scope
+     * @param string $entity
      * @param bool $value
      */
-    public static function setHasCompleteness(Container $container, string $scope, bool $value):void
+    public static function setHasCompleteness(Container $container, string $entity, bool $value):void
     {
-        parent::setHasCompleteness($container, $scope, $value);
+        parent::setHasCompleteness($container, $entity, $value);
+
+        // prepare data
+        $fields = [];
+        $channels = $container
+            ->get('entityManager')
+            ->getRepository('Channel')
+            ->select(['name'])
+            ->find()
+            ->toArray();
+
+        $defs = self::CONFIG_COMPLETE_FIELDS;
+        $defs['isChannel'] = true;
+
+        foreach ($channels as $k => $ch) {
+            $defs['sortOrder'] = self::START_SORT_ORDER_CHANNEL + (int)$k;
+            $fields[self::getNameChannelField($ch['name'])] = $defs;
+        }
+
+        $container->get('metadata')->set('entityDefs', $entity, ['fields' => $fields]);
+        $container->get('metadata')->save();
 
         //set HasCompleteness for ProductAttributeValue
         parent::setHasCompleteness($container, 'ProductAttributeValue', $value);
+    }
+
+    /**
+     * @param string $channel
+     * @return string
+     */
+    public static function getNameChannelField(string $channel): string
+    {
+        return $channel;
     }
 
     /**
@@ -148,10 +167,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
             } else {
                 $items = $this->getItem('fields');
             }
-            $completenessChannels[] = [
-                'id' => $id,
-                'name' => $channel['name'],
-                'complete' => $this->commonCalculationComplete($items)];
+            $completenessChannels[$channel['name']] =  $this->commonCalculationComplete($items);
         }
         return $completenessChannels;
     }
