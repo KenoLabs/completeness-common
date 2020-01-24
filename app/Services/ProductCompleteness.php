@@ -4,9 +4,11 @@ namespace Completeness\Services;
 
 use Espo\Core\Exceptions\Error;
 use Espo\Core\Utils\Json;
-use Espo\ORM\Entity;
+use Espo\ORM\IEntity;
 use Espo\ORM\EntityCollection;
+use PDO;
 use Pim\Entities\Attribute;
+use Pim\Entities\Channel;
 use Pim\Entities\ProductAttributeValue;
 use Treo\Core\Container;
 
@@ -18,37 +20,50 @@ use Treo\Core\Container;
  */
 class ProductCompleteness extends CommonCompleteness implements CompletenessInterface
 {
-    public const START_SORT_ORDER_CHANNEL = 3;
-
-    /**
-     * @param Entity $entity
-     */
-    public function setEntity(Entity $entity): void
-    {
-        $this->entity = ($entity->getEntityType() === 'Product')
-            ? $entity
-            : $entity->get('product');
-    }
+    public const START_SORT_ORDER_CHANNEL = 200;
 
     /**
      * Update completeness for Product entity
      *
+     * @param IEntity $entity
      * @return array
      * @throws Error
      */
-    public function calculate(): array
+    public function calculate(IEntity $entity): array
     {
-        $this->prepareRequiredAttr();
+        $entity = ($entity->getEntityType() === 'Product')
+            ? $entity
+            : $entity->get('product');
 
-        $result = parent::calculate();
+        $items = $this->prepareRequiredFields($entity);
 
-        $completeness['completeGlobal'] = $this->calculationCompleteGlobal();
-        $channelsCompleteness = $this->calculationCompletenessChannel();
+        $completeness = parent::calculate($entity);
+
+        $completeness['completeGlobal'] = $this->calculationCompleteGlobal($items['attrsGlobal'], $items['fields']);
+        $channelsCompleteness = $this->calculationCompletenessChannel($items['fields'], $items['attrsChannel'], $entity);
         $completeness = array_merge($completeness, $channelsCompleteness);
 
-        $this->setFieldsCompletenessInEntity($completeness);
+        $this->setFieldsCompletenessInEntity($completeness, $entity);
 
-        return array_merge($completeness, $result);
+        return array_merge($completeness, $completeness);
+    }
+
+    /**
+     * @param string $entityName
+     */
+    public function afterDisable(string $entityName): void
+    {
+        $channels = $this
+            ->getEntityManager()
+            ->getRepository('Channel')
+            ->select(['code'])
+            ->find();
+
+        foreach ($channels as $channel) {
+            self::dropFieldChannel($this->getContainer(), $channel);
+        }
+
+        parent::afterDisable($entityName);
     }
 
     /**
@@ -79,93 +94,168 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
     {
         parent::setHasCompleteness($container, $entity, $value);
 
-        // prepare data
-        $fields = [];
+        /** @var Channel[] $channels */
         $channels = $container
             ->get('entityManager')
             ->getRepository('Channel')
-            ->select(['name'])
-            ->find()
-            ->toArray();
+            ->select(['name', 'code'])
+            ->find();
 
         $defs = self::CONFIG_COMPLETE_FIELDS;
         $defs['isChannel'] = true;
+        $defs['isCustom'] = false;
 
         foreach ($channels as $k => $ch) {
             $defs['sortOrder'] = self::START_SORT_ORDER_CHANNEL + (int)$k;
-            $fields[self::getNameChannelField($ch['name'])] = $defs;
+            self::createFieldChannel($container, $ch, $defs);
         }
-
-        $container->get('metadata')->set('entityDefs', $entity, ['fields' => $fields]);
-        $container->get('metadata')->save();
 
         //set HasCompleteness for ProductAttributeValue
         parent::setHasCompleteness($container, 'ProductAttributeValue', $value);
     }
 
     /**
-     * @param string $channel
+     * @param Channel $channel
      * @return string
      */
-    public static function getNameChannelField(string $channel): string
+    public static function getLabelChannelField(Channel $channel): string
     {
-        return $channel;
+        return $channel->get('name');
     }
 
     /**
-     * Prepare required attributes
+     * @param Container $container
+     * @param Channel $channel
+     * @param array $defs
+     * @param bool $notRebuild
      */
-    protected function prepareRequiredAttr(): void
+    public static function createFieldChannel(Container $container, Channel $channel, array $defs, bool $notRebuild = true)
     {
-        // get required attributes
-        $attributes = $this->getAttrs();
+        $defs['label'] = empty($defs['label']) ? self::getLabelChannelField($channel) : $defs['label'];
+        $defs['notNull'] = empty($defs['notNull']) ? true : $defs['notNull'];
+        $defs['default'] = empty($defs['default']) ? null : $defs['default'];
 
-        /** @var Attribute $attr */
-        foreach ($attributes as $attr) {
-            $scope = $attr->get('scope');
+        if (empty($container->get('metadata')->get(['entityDefs', 'Product', 'fields', $channel->get('code')]))) {
+            $container->get('fieldManager')->create('Product', $channel->get('code'), $defs);
 
-            $isEmpty = $this->isEmpty($attr);
-            $item = ['id' => $attr->get('id'), 'isEmpty' => $isEmpty];
-
-            $this->items['localComplete'][] = $item;
-            $this->itemsForTotalComplete[] = $isEmpty;
-            if ($scope === 'Global') {
-                $this->items['attrsGlobal'][] = $item;
-            } elseif ($scope === 'Channel') {
-                $channels = $attr->get('channels')->toArray();
-                $channels = !empty($channels) ? array_column($channels, 'id') : [];
-                $this->setItemByChannel($channels, $item);
-            }
-            if (!empty($attr->get('attribute')->get('isMultilang'))) {
-                foreach ($this->getLanguages() as $local => $language) {
-                    $isEmpty = $this->isEmpty($attr, $language);
-                    $item = ['id' => $attr->get('id'), 'isEmpty' => $isEmpty, 'isMultiLang' => true];
-
-                    $this->items['multiLang'][$local][] = $item;
-                    $this->itemsForTotalComplete[] = $isEmpty;
-                    if ($scope === 'Global') {
-                        $this->items['attrsGlobal'][] = $item;
-                    } elseif ($scope === 'Channel') {
-                        $this->setItemByChannel($channels, $item);
-                    }
-                }
+            if (!$notRebuild) {
+                $container->get('dataManager')->rebuild();
             }
         }
     }
 
     /**
+     * @param Container $container
+     * @param Channel $channel
+     * @param bool $notRebuild
+     */
+    public static function dropFieldChannel(Container $container, Channel $channel, bool $notRebuild = true): void
+    {
+        if (!empty($container->get('metadata')->get(['entityDefs', 'Product', 'fields', $channel->get('code')]))) {
+            $container
+                ->get('fieldManager')
+                ->delete('Product', $channel->get('code'));
+
+            if (!$notRebuild) {
+                $container->get('dataManager')->rebuild();
+            }
+
+            $columns = $container
+                ->get('entityManager')
+                ->nativeQuery("SHOW COLUMNS FROM `product` LIKE '{$channel->get('code')}'")
+                ->fetch(PDO::FETCH_ASSOC);
+
+            if (!empty($columns)) {
+                $container
+                    ->get('entityManager')
+                    ->getPDO()
+                    ->exec('ALTER TABLE product DROP COLUMN ' . $channel->get('code'));
+            }
+        }
+
+    }
+
+    /**
+     * @param IEntity $entity
+     * @return array
+     * @throws Error
+     */
+    protected function prepareRequiredFields(IEntity $entity): array
+    {
+        $result = parent::prepareRequiredFields($entity);
+
+        return array_merge_recursive($result, $this->prepareRequiredAttr($entity));
+    }
+
+    /**
+     * Prepare required attributes
+     * @param IEntity $entity
      * @return array
      */
-    protected function calculationCompletenessChannel(): array
+    protected function prepareRequiredAttr(IEntity $entity): array
+    {
+        // get required attributes
+        $attributes = $this->getAttrs($entity);
+
+        $result = [
+            'fields' => [],
+            'multiLang' => [],
+            'localComplete' => [],
+            'attrsGlobal' => [],
+            'completeTotal' => [],
+            'attrsChannel' => []
+        ];
+
+        /** @var Attribute $attr */
+        foreach ($attributes as $attr) {
+            $scope = $attr->get('scope');
+
+            $isEmpty = $this->isEmpty($attr, $entity);
+            $item = ['id' => $attr->get('id'), 'isEmpty' => $isEmpty];
+
+            $result['localComplete'][] = $item;
+            $result['completeTotal'][] = $isEmpty;
+            if ($scope === 'Global') {
+                $result['attrsGlobal'][] = $item;
+            } elseif ($scope === 'Channel') {
+                $channels = $attr->get('channels')->toArray();
+                $channels = !empty($channels) ? array_column($channels, 'id') : [];
+                $this->setItemByChannel($channels, $item, $result);
+            }
+            if (!empty($attr->get('attribute')->get('isMultilang'))) {
+                foreach ($this->getLanguages() as $local => $language) {
+                    $isEmpty = $this->isEmpty($attr, $entity, $language);
+                    $item = ['id' => $attr->get('id'), 'isEmpty' => $isEmpty, 'isMultiLang' => true];
+
+                    $result['multiLang'][$local][] = $item;
+                    $result['completeTotal'][] = $isEmpty;
+                    if ($scope === 'Global') {
+                        $result['attrsGlobal'][] = $item;
+                    } elseif ($scope === 'Channel') {
+                        $this->setItemByChannel($channels, $item, $result);
+                    }
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param array $fields
+     * @param array $attrsChannel
+     * @return array
+     */
+    protected function calculationCompletenessChannel(array $fields, array $attrsChannel, IEntity $entity): array
     {
         $completenessChannels = [];
-        foreach ($this->getChannels() as $channel) {
+        foreach ($this->getChannels($entity) as $channel) {
             $id = $channel['id'];
-            if (is_array($this->getItem('attrsChannel')[$id])) {
+            if (is_array($attrsChannel[$id])) {
                 //channels attributes + fields
-                $items = array_merge($this->getItem('attrsChannel')[$id], $this->getItem('fields'));
+                $items = array_merge($attrsChannel[$id], $fields);
             } else {
-                $items = $this->getItem('fields');
+                $items = $fields;
             }
             $completenessChannels[$channel['name']] =  $this->commonCalculationComplete($items);
         }
@@ -173,24 +263,27 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
     }
 
     /**
+     * @param array $attrsGlobal
+     * @param array $fields
      * @return float
      */
-    protected function calculationCompleteGlobal(): float
+    protected function calculationCompleteGlobal(array $attrsGlobal, array $fields): float
     {
-        $globalItems = array_merge($this->getItem('attrsGlobal'), $this->getItem('fields'));
+        $globalItems = array_merge($attrsGlobal, $fields);
         return $this->commonCalculationComplete($globalItems);
     }
 
     /**
      * @param EntityCollection $attributes
      *
+     * @param IEntity $entity
      * @return EntityCollection
      */
-    protected function filterAttributes(EntityCollection $attributes): EntityCollection
+    protected function filterAttributes(EntityCollection $attributes, IEntity $entity): EntityCollection
     {
-        if (count($attributes) > 0 && $this->entity->get('type') === 'configurableProduct') {
+        if (count($attributes) > 0 && $entity->get('type') === 'configurableProduct') {
             foreach ($attributes as $k => $attribute) {
-                if (in_array($attribute->get('id'), $this->getExcludedAttributes())) {
+                if (in_array($attribute->get('id'), $this->getExcludedAttributes($entity), true)) {
                     $attributes->offsetUnset($k);
                 }
             }
@@ -202,12 +295,13 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
      * @param mixed $value
      * @param string $language
      *
+     * @param IEntity $entity
      * @return bool
      */
-    protected function isEmpty($value, string $language = ''): bool
+    protected function isEmpty($value, IEntity $entity, string $language = ''): bool
     {
         $isEmpty = true;
-        if (is_string($value) && !empty($valueCurrent = $this->entity->get($value . $language))) {
+        if (is_string($value) && !empty($valueCurrent = $entity->get($value . $language))) {
             if ($valueCurrent instanceof EntityCollection) {
                 $isEmpty = (bool)$valueCurrent->count();
             } else {
@@ -225,47 +319,50 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
     }
 
     /**
+     * @param IEntity $entity
      * @return EntityCollection|null
      */
-    protected function getAttrs(): EntityCollection
+    protected function getAttrs(IEntity $entity): EntityCollection
     {
         $attributes = $this->getEntityManager()
             ->getRepository('ProductAttributeValue')
             ->leftJoin(['productFamilyAttribute', 'attribute'])
             ->where([
-                'productId' => $this->entity->get('id'),
+                'productId' => $entity->get('id'),
                 'productFamilyAttribute.isRequired' => true
             ])
             ->find();
 
-        return $this->filterAttributes($attributes);
+        return $this->filterAttributes($attributes, $entity);
     }
 
     /**
+     * @param IEntity $entity
      * @return array
      */
-    protected function getChannels(): array
+    protected function getChannels(IEntity $entity): array
     {
-        if ($this->entity->get('type') === 'productVariant'
-            && !empty($this->entity->get('configurableProduct'))
-            && !in_array('channels', $this->entity->get('data')->customRelations, true)) {
-            $channels = $this->entity->get('configurableProduct')->get('channels')->toArray();
+        if ($entity->get('type') === 'productVariant'
+            && !empty($entity->get('configurableProduct'))
+            && !in_array('channels', $entity->get('data')->customRelations, true)) {
+            $channels = $entity->get('configurableProduct')->get('channels')->toArray();
         } else {
-            $channels = $this->entity->get('channels')->toArray();
+            $channels = $entity->get('channels')->toArray();
         }
         return !empty($channels) ? $channels : [];
     }
 
     /**
+     * @param IEntity $entity
      * @return array
      */
-    protected function getExcludedAttributes(): array
+    protected function getExcludedAttributes(IEntity $entity): array
     {
         $result = [];
-        if ($this->entity->get('type') === 'configurableProduct') {
-            $variants = $this->entity->get('productVariants');
+        if ($entity->get('type') === 'configurableProduct') {
+            $variants = $entity->get('productVariants');
             if (!empty($variants) && count($variants) > 0) {
-                /** @var Entity $variant */
+                /** @var IEntity $variant */
                 foreach ($variants as $variant) {
                     $result = array_merge($result, array_column($variant->get('data')->attributes, 'id'));
                 }
@@ -276,13 +373,14 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
     }
 
     /**
-     * @param $channels
-     * @param $item
+     * @param array $channels
+     * @param array $item
+     * @param array $result
      */
-    private function setItemByChannel(array $channels, array $item): void
+    private function setItemByChannel(array $channels, array $item, array &$result): void
     {
         foreach ($channels as $channel) {
-            $this->items['attrsChannel'][$channel][] = $item;
+            $result['attrsChannel'][$channel][] = $item;
         }
     }
 }
