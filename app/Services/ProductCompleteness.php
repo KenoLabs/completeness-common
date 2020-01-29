@@ -273,7 +273,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
             } else {
                 $items = $fields;
             }
-            $completenessChannels[$channel['name']] =  $this->commonCalculationComplete($items);
+            $completenessChannels['completeness_channel_' . $channel['code']] =  $this->commonCalculationComplete($items);
         }
         return $completenessChannels;
     }
