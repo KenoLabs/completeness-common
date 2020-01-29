@@ -124,6 +124,15 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
     }
 
     /**
+     * @param Channel $channel
+     * @return string
+     */
+    public static function getNameChannelField(Channel $channel): string
+    {
+        return 'completeness_channel_' . $channel->get('code');
+    }
+
+    /**
      * @param Container $container
      * @param Channel $channel
      * @param array $defs
@@ -135,8 +144,11 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
         $defs['notNull'] = empty($defs['notNull']) ? true : $defs['notNull'];
         $defs['default'] = empty($defs['default']) ? null : $defs['default'];
 
-        if (empty($container->get('metadata')->get(['entityDefs', 'Product', 'fields', $channel->get('code')]))) {
-            $container->get('fieldManager')->create('Product', $channel->get('code'), $defs);
+        $nameField = self::getNameChannelField($channel);
+
+        if (empty($container->get('metadata')->get(['entityDefs', 'Product', 'fields', $nameField]))) {
+
+            $container->get('fieldManager')->create('Product', $nameField, $defs);
 
             if (!$notRebuild) {
                 $container->get('dataManager')->rebuild();
@@ -151,10 +163,12 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
      */
     public static function dropFieldChannel(Container $container, Channel $channel, bool $notRebuild = true): void
     {
-        if (!empty($container->get('metadata')->get(['entityDefs', 'Product', 'fields', $channel->get('code')]))) {
+        $nameField = self::getNameChannelField($channel);
+
+        if (!empty($container->get('metadata')->get(['entityDefs', 'Product', 'fields', $nameField]))) {
             $container
                 ->get('fieldManager')
-                ->delete('Product', $channel->get('code'));
+                ->delete('Product', $nameField);
 
             if (!$notRebuild) {
                 $container->get('dataManager')->rebuild();
@@ -162,14 +176,14 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
 
             $columns = $container
                 ->get('entityManager')
-                ->nativeQuery("SHOW COLUMNS FROM `product` LIKE '{$channel->get('code')}'")
+                ->nativeQuery("SHOW COLUMNS FROM `product` LIKE '{$nameField}'")
                 ->fetch(PDO::FETCH_ASSOC);
 
             if (!empty($columns)) {
                 $container
                     ->get('entityManager')
                     ->getPDO()
-                    ->exec('ALTER TABLE product DROP COLUMN ' . $channel->get('code'));
+                    ->exec('ALTER TABLE product DROP COLUMN ' . $nameField);
             }
         }
 
