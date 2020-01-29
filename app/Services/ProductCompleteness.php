@@ -4,6 +4,7 @@ namespace Completeness\Services;
 
 use Espo\Core\Exceptions\Error;
 use Espo\Core\Utils\Json;
+use Espo\ORM\EntityManager;
 use Espo\ORM\IEntity;
 use Espo\ORM\EntityCollection;
 use PDO;
@@ -40,7 +41,8 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
         $completeness = parent::calculate($entity);
 
         $completeness['completeGlobal'] = $this->calculationCompleteGlobal($items['attrsGlobal'], $items['fields']);
-        $channelsCompleteness = $this->calculationCompletenessChannel($items['fields'], $items['attrsChannel'], $entity);
+        $channelsCompleteness
+            = $this->calculationCompletenessChannel($items['fields'], $items['attrsChannel'], $entity);
         $completeness = array_merge($completeness, $channelsCompleteness);
 
         $this->setFieldsCompletenessInEntity($completeness, $entity);
@@ -147,7 +149,6 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
         $nameField = self::getNameChannelField($channel);
 
         if (empty($container->get('metadata')->get(['entityDefs', 'Product', 'fields', $nameField]))) {
-
             $container->get('fieldManager')->create('Product', $nameField, $defs);
 
             if (!$notRebuild) {
@@ -174,19 +175,20 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
                 $container->get('dataManager')->rebuild();
             }
 
-            $columns = $container
-                ->get('entityManager')
-                ->nativeQuery("SHOW COLUMNS FROM `product` LIKE '{$nameField}'")
-                ->fetch(PDO::FETCH_ASSOC);
-
-            if (!empty($columns)) {
-                $container
-                    ->get('entityManager')
-                    ->getPDO()
-                    ->exec('ALTER TABLE product DROP COLUMN ' . $nameField);
-            }
+            self::dropColumnWithTable($container->get('entityManager'), $nameField);
         }
+    }
 
+    /**
+     * @param EntityManager $em
+     * @param $column
+     */
+    public static function dropColumnWithTable(EntityManager $em, string $column): void
+    {
+        $columns = $em->nativeQuery("SHOW COLUMNS FROM `product` LIKE '{$column}'")->fetch(PDO::FETCH_ASSOC);
+        if (!empty($columns)) {
+            $em ->getPDO()->exec('ALTER TABLE product DROP COLUMN ' . $column);
+        }
     }
 
     /**
