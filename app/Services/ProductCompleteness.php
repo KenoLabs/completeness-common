@@ -30,7 +30,7 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
      * @return array
      * @throws Error
      */
-    public function calculate(IEntity $entity): array
+    public function calculate(IEntity $entity): IEntity
     {
         $entity = ($entity->getEntityType() === 'Product')
             ? $entity
@@ -38,16 +38,16 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
 
         $items = $this->prepareRequiredFields($entity);
 
-        $completeness = parent::calculate($entity);
+        $entity = parent::calculate($entity);
 
         $completeness['completeGlobal'] = $this->calculationCompleteGlobal($items['attrsGlobal'], $items['fields']);
         $channelsCompleteness
             = $this->calculationCompletenessChannel($items['fields'], $items['attrsChannel'], $entity);
-        $completeness = array_merge($completeness, $channelsCompleteness);
 
+        $completeness = array_merge($completeness, $channelsCompleteness);
         $this->setFieldsCompletenessInEntity($completeness, $entity);
 
-        return array_merge($completeness, $completeness);
+        return $entity;
     }
 
     /**
@@ -127,11 +127,13 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
 
     /**
      * @param Channel $channel
+     * @param bool $fetched
      * @return string
      */
-    public static function getNameChannelField(Channel $channel): string
+    public static function getNameChannelField(Channel $channel, bool $fetched = false): string
     {
-        return 'completeness_channel_' . $channel->get('code');
+        $code = $fetched ? $channel->getFetched('code') : $channel->get('code');
+        return 'completeness_channel_' . $code;
     }
 
     /**
@@ -161,10 +163,11 @@ class ProductCompleteness extends CommonCompleteness implements CompletenessInte
      * @param Container $container
      * @param Channel $channel
      * @param bool $notRebuild
+     * @param bool $fetched
      */
-    public static function dropFieldChannel(Container $container, Channel $channel, bool $notRebuild = true): void
+    public static function dropFieldChannel(Container $container, Channel $channel, bool $notRebuild = true, $fetched = false): void
     {
-        $nameField = self::getNameChannelField($channel);
+        $nameField = self::getNameChannelField($channel, $fetched);
 
         if (!empty($container->get('metadata')->get(['entityDefs', 'Product', 'fields', $nameField]))) {
             $container
